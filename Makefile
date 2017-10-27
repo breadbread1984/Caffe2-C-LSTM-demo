@@ -6,7 +6,7 @@ OBJS=$(patsubst %.cpp,%.o,$(wildcard src/*.cpp))
 all: generate_trainset predictor
 
 dataset: generate_trainset
-	./generate_trainset -i res/shakespeare.txt -o ${@}
+	./generate_trainset -i res/shakespeare.txt -o ${@} -b 10
 
 .PHONY: train test
 
