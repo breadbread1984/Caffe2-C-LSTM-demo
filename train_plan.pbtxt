@@ -1,0 +1,773 @@
+name: "lstm_train_plan"
+#batch_size现在是10，如果要修改成其他的值需要
+#修改char_rnn_init网络里面LSTM/hidden_t_last和LSTM/cell_t_last的形状
+#修改char_rnn里面dbreader里面的batch_size参数
+#修改char_rnn里面生成target的Reshape操作符的shape参数为seq_length x batch_size
+#seq_length现在是25，如果要修改训练序列长度需要
+#修改char_rnn_init网络里面seq_lengths
+#修改char_rnn里面生成target的Reshape操作符的shape参数为seq_length x batch_size
+network {
+	#打开训练集
+	name: "char_rnn_init"
+	op {
+		output: "dbreader"
+		type: "CreateDB"
+		arg {
+			name: "db_type"
+			s: "lmdb"
+		}
+		arg {
+			name: "db"
+			s: "dataset"
+		}
+	}
+	#训练集都是固定长度的样本，长度都是25，batch_size是10
+	op {
+		name: ""
+		output: "seq_lengths"
+		type: "GivenTensorIntFill"
+		arg {
+			name: "shape"
+			ints: 10
+		}
+		arg {
+			name: "values"
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+			ints: 25
+		}
+	}
+	#Wz Wi Wf Wo各100x62
+	op {
+		output: "LSTM/i2h_w"
+		type: "XavierFill"
+		arg {
+			name: "shape"
+			ints: 400
+			ints: 62
+		}
+	}
+	#Bz Bi Bf Bo各100维
+	op {
+		output: "LSTM/i2h_b"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 400
+		}
+	}
+	op {
+		output: "LSTM/gates_t_w"
+		type: "XavierFill"
+		arg {
+			name: "shape"
+			ints: 400
+			ints: 100
+		}
+	}
+	op {
+		output: "LSTM/gates_t_b"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 400
+		}
+	}
+	op {
+		output: "char_rnn_blob_0_w"
+		type: "XavierFill"
+		arg {
+			name: "shape"
+			ints: 62
+			ints: 100
+		}
+	}
+	op {
+		output: "char_rnn_blob_0_b"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 62
+		}
+	}
+	op {
+		output: "optimizer_iteration"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 1
+		}
+		arg {
+			name: "value"
+			i: 0
+		}
+		arg {
+			name: "dtype"
+			i: 10
+		}
+		device_option {
+			device_type: 0
+		}
+	}
+	op {
+		output: "iteration_mutex"
+		type: "CreateMutex"
+		device_option {
+			device_type: 0
+		}
+	}
+	op {
+		output: "ONE"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 1
+		}
+		arg {
+			name: "value"
+			f: 1
+		}
+	}
+	op {
+		output: "LSTM/hidden_t_last"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 10
+			ints: 100
+		}
+		arg {
+			name: "value"
+			f: 0
+		}
+	}
+	op {
+		output: "LSTM/cell_t_last"
+		type: "ConstantFill"
+		arg {
+			name: "shape"
+			ints: 10
+			ints: 100
+		}
+		arg {
+			name: "value"
+			f: 0
+		}
+	}
+	device_option {
+		device_type: 1
+	}
+}
+network {
+	name: "char_rnn_loop"
+	op {
+		input: "LSTM/hidden_t_last"
+		output: "hidden_init"
+		type: "Copy"
+	}
+	op {
+		input: "LSTM/cell_t_last"
+		output: "cell_init"
+		type: "Copy"
+	}
+	device_option {
+		device_type: 1
+	}
+	external_input: "LSTM/hidden_t_last"
+	external_input: "LSTM/cell_t_last"
+}
+network {
+	name: "char_rnn"
+	op {
+		input: "dbreader"
+		output: "data_float"
+		output: "label_int32"
+		type: "TensorProtosDBInput"
+		arg {
+			name: "batch_size"
+			i: 10
+		}
+	}
+	#从lmdb读出来的格式是batch_size x seq_length x D
+	#但是lstm要求的输入格式是seq_length x batch_size x D
+	#所以需要转置下数据顺序
+	op {
+		type: "Transpose"
+		input: "data_float"
+		output: "input_blob"
+		arg {
+			name: "axes"
+			ints: 1
+			ints: 0
+			ints: 2
+		}
+	}
+	#从lmdb读出来的格式是batch_size x seq_length
+	#但是lstm要求的输出格式是seq_length x batch_size
+	#所以需要转置下数据顺序
+	op {
+		type: "Transpose"
+		input: "label_int32"
+		output: "transposed_label_int32"
+		arg {
+			name: "axes"
+			ints: 1
+			ints: 0
+		}
+	}
+	op {
+		type: "Reshape"
+		input: "transposed_label_int32"
+		output: "target"
+		output: "_"
+		arg {
+			name: "shape"
+			#seq_length x batch_size
+			ints: 250
+		}
+	}
+	op {
+		input: "input_blob"
+		input: "LSTM/i2h_w"
+		input: "LSTM/i2h_b"
+		output: "LSTM/i2h"
+		type: "FC"
+		arg {
+			name: "axis"
+			i: 2
+		}
+		engine: "CUDNN"
+	}
+	op {
+		input: "LSTM/i2h"
+		input: "hidden_init"
+		input: "cell_init"
+		input: "LSTM/gates_t_w"
+		input: "LSTM/gates_t_b"
+		input: "seq_lengths"
+		output: "LSTM/hidden_t_all"
+		output: "LSTM/hidden_t_last"
+		output: "LSTM/cell_t_all"
+		output: "LSTM/cell_t_last"
+		output: "LSTM/step_workspaces"
+		type: "RecurrentNetwork"
+		arg {
+			name: "outputs_with_grads"
+			ints: 0
+		}
+		arg {
+			name: "link_internal"
+			strings: "LSTM/hidden_t_prev"
+			strings: "LSTM/hidden_t"
+			strings: "LSTM/cell_t_prev"
+			strings: "LSTM/cell_t"
+			strings: "input_t"
+		}
+		arg {
+			name: "alias_dst"
+			strings: "LSTM/hidden_t_all"
+			strings: "LSTM/hidden_t_last"
+			strings: "LSTM/cell_t_all"
+			strings: "LSTM/cell_t_last"
+		}
+		arg {
+			name: "recompute_blobs_on_backward"
+		}
+		arg {
+			name: "timestep"
+			s: "timestep"
+		}
+		arg {
+			name: "backward_link_external"
+			strings: "LSTM/LSTM/hidden_t_prev_states_grad"
+			strings: "LSTM/LSTM/hidden_t_prev_states_grad"
+			strings: "LSTM/LSTM/cell_t_prev_states_grad"
+			strings: "LSTM/LSTM/cell_t_prev_states_grad"
+			strings: "LSTM/i2h_grad"
+		}
+		arg {
+			name: "link_external"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+			strings: "LSTM/i2h"
+		}
+		arg {
+			name: "link_offset"
+			ints: 0
+			ints: 1
+			ints: 0
+			ints: 1
+			ints: 0
+		}
+		arg {
+			name: "alias_offset"
+			ints: 1
+			ints: -1
+			ints: 1
+			ints: -1
+		}
+		arg {
+			name: "recurrent_states"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+		}
+		arg {
+			name: "backward_link_offset"
+			ints: 1
+			ints: 0
+			ints: 1
+			ints: 0
+			ints: 0
+		}
+		arg {
+			name: "param_grads"
+			strings: "LSTM/gates_t_w_grad"
+			strings: "LSTM/gates_t_b_grad"
+		}
+		arg {
+			name: "backward_link_internal"
+			strings: "LSTM/hidden_t_grad"
+			strings: "LSTM/hidden_t_prev_grad"
+			strings: "LSTM/cell_t_grad"
+			strings: "LSTM/cell_t_prev_grad"
+			strings: "LSTM/gates_t_grad"
+		}
+		arg {
+			name: "param"
+			ints: 3
+			ints: 4
+		}
+		arg {
+			name: "step_net"
+			s: "name: \"LSTM\"\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/gates_t_w\"\n  input: \"LSTM/gates_t_b\"\n  output: \"LSTM/gates_t\"\n  type: \"FC\"\n  arg {\n    name: \"axis\"\n    i: 2\n  }\n  device_option {\n    device_type: 1\n  }\n  engine: \"CUDNN\"\n}\nop {\n  input: \"LSTM/gates_t\"\n  input: \"input_t\"\n  output: \"LSTM/gates_t\"\n  type: \"Sum\"\n  device_option {\n    device_type: 1\n  }\n}\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/cell_t_prev\"\n  input: \"LSTM/gates_t\"\n  input: \"seq_lengths\"\n  input: \"timestep\"\n  output: \"LSTM/hidden_t\"\n  output: \"LSTM/cell_t\"\n  type: \"LSTMUnit\"\n  arg {\n    name: \"drop_states\"\n    i: 0\n  }\n  arg {\n    name: \"forget_bias\"\n    f: 0\n  }\n  device_option {\n    device_type: 1\n  }\n}\ntype: \"rnn\"\ndevice_option {\n  device_type: 1\n}\nexternal_input: \"input_t\"\nexternal_input: \"timestep\"\nexternal_input: \"LSTM/hidden_t_prev\"\nexternal_input: \"LSTM/cell_t_prev\"\nexternal_input: \"LSTM/gates_t_w\"\nexternal_input: \"LSTM/gates_t_b\"\nexternal_input: \"seq_lengths\"\nexternal_output: \"LSTM/hidden_t\"\nexternal_output: \"LSTM/cell_t\"\n"
+		}
+		arg {
+			name: "backward_step_net"
+			s: "name: \"RecurrentBackwardStep\"\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/cell_t_prev\"\n  input: \"LSTM/gates_t\"\n  input: \"seq_lengths\"\n  input: \"timestep\"\n  input: \"LSTM/hidden_t\"\n  input: \"LSTM/cell_t\"\n  input: \"LSTM/hidden_t_grad\"\n  input: \"LSTM/cell_t_grad\"\n  output: \"LSTM/hidden_t_prev_grad\"\n  output: \"LSTM/cell_t_prev_grad\"\n  output: \"LSTM/gates_t_grad\"\n  name: \"\"\n  type: \"LSTMUnitGradient\"\n  arg {\n    name: \"drop_states\"\n    i: 0\n  }\n  arg {\n    name: \"forget_bias\"\n    f: 0\n  }\n  device_option {\n    device_type: 1\n  }\n  is_gradient_op: true\n}\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/gates_t_w\"\n  input: \"LSTM/gates_t_grad\"\n  output: \"LSTM/gates_t_w_grad\"\n  output: \"LSTM/gates_t_b_grad\"\n  output: \"LSTM/hidden_t_prev_grad_split\"\n  name: \"\"\n  type: \"FCGradient\"\n  arg {\n    name: \"axis\"\n    i: 2\n  }\n  device_option {\n    device_type: 1\n  }\n  engine: \"CUDNN\"\n  is_gradient_op: true\n}\nop {\n  input: \"LSTM/hidden_t_prev_grad\"\n  input: \"LSTM/hidden_t_prev_grad_split\"\n  output: \"LSTM/hidden_t_prev_grad\"\n  type: \"Sum\"\n}\ntype: \"simple\"\ndevice_option {\n  device_type: 1\n}\nexternal_input: \"LSTM/gates_t\"\nexternal_input: \"LSTM/hidden_t_grad\"\nexternal_input: \"LSTM/cell_t_grad\"\nexternal_input: \"input_t\"\nexternal_input: \"timestep\"\nexternal_input: \"LSTM/hidden_t_prev\"\nexternal_input: \"LSTM/cell_t_prev\"\nexternal_input: \"LSTM/gates_t_w\"\nexternal_input: \"LSTM/gates_t_b\"\nexternal_input: \"seq_lengths\"\nexternal_input: \"LSTM/hidden_t\"\nexternal_input: \"LSTM/cell_t\"\n"
+		}
+		arg {
+			name: "alias_src"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+		}
+		arg {
+			name: "initial_recurrent_state_ids"
+			ints: 1
+			ints: 2
+		}
+	}
+	op {
+		input: "LSTM/hidden_t_all"
+		input: "char_rnn_blob_0_w"
+		input: "char_rnn_blob_0_b"
+		output: "char_rnn_blob_0"
+		type: "FC"
+		arg {
+			name: "axis"
+			i: 2
+		}
+		engine: "CUDNN"
+	}
+	op {
+		input: "char_rnn_blob_0"
+		output: "softmax"
+		type: "Softmax"
+		arg {
+			name: "axis"
+			i: 2
+		}
+	}
+	op {
+		input: "softmax"
+		output: "softmax_reshaped"
+		output: "_"
+		type: "Reshape"
+		arg {
+			name: "shape"
+			ints: -1
+			ints: 62
+		}
+	}
+	op {
+		input: "softmax_reshaped"
+		input: "target"
+		output: "xent"
+		type: "LabelCrossEntropy"
+	}
+	op {
+		input: "xent"
+		output: "loss"
+		type: "AveragedLoss"
+	}
+	op {
+		input: "loss"
+		output: "loss_grad"
+		type: "ConstantFill"
+		arg {
+			name: "value"
+			f: 1
+		}
+	}
+	op {
+		input: "xent"
+		input: "loss_grad"
+		output: "xent_grad"
+		name: ""
+		type: "AveragedLossGradient"
+		is_gradient_op: true
+	}
+	op {
+		input: "softmax_reshaped"
+		input: "target"
+		input: "xent_grad"
+		output: "softmax_reshaped_grad"
+		name: ""
+		type: "LabelCrossEntropyGradient"
+		is_gradient_op: true
+	}
+	op {
+		input: "softmax_reshaped_grad"
+		input: "_"
+		output: "softmax_grad"
+		output: "_softmax_grad_dims"
+		name: ""
+		type: "Reshape"
+		is_gradient_op: true
+	}
+	op {
+		input: "softmax"
+		input: "softmax_grad"
+		output: "char_rnn_blob_0_grad"
+		name: ""
+		type: "SoftmaxGradient"
+		arg {
+			name: "axis"
+			i: 2
+		}
+		is_gradient_op: true
+	}
+	op {
+		input: "LSTM/hidden_t_all"
+		input: "char_rnn_blob_0_w"
+		input: "char_rnn_blob_0_grad"
+		output: "char_rnn_blob_0_w_grad"
+		output: "char_rnn_blob_0_b_grad"
+		output: "LSTM/hidden_t_all_grad"
+		name: ""
+		type: "FCGradient"
+		arg {
+			name: "axis"
+			i: 2
+		}
+		engine: "CUDNN"
+		is_gradient_op: true
+	}
+	op {
+		input: "LSTM/hidden_t_all_grad"
+		input: "LSTM/i2h"
+		input: "hidden_init"
+		input: "cell_init"
+		input: "LSTM/gates_t_w"
+		input: "LSTM/gates_t_b"
+		input: "seq_lengths"
+		input: "LSTM/hidden_t_all"
+		input: "LSTM/hidden_t_last"
+		input: "LSTM/cell_t_all"
+		input: "LSTM/cell_t_last"
+		input: "LSTM/step_workspaces"
+		output: "LSTM/i2h_grad"
+		output: "LSTM/gates_t_w_grad"
+		output: "LSTM/gates_t_b_grad"
+		output: "hidden_init_grad"
+		output: "cell_init_grad"
+		name: ""
+		type: "RecurrentNetworkGradient"
+		arg {
+			name: "outputs_with_grads"
+			ints: 0
+		}
+		arg {
+			name: "link_internal"
+			strings: "LSTM/hidden_t_prev"
+			strings: "LSTM/hidden_t"
+			strings: "LSTM/cell_t_prev"
+			strings: "LSTM/cell_t"
+			strings: "input_t"
+		}
+		arg {
+			name: "alias_dst"
+			strings: "LSTM/hidden_t_all"
+			strings: "LSTM/hidden_t_last"
+			strings: "LSTM/cell_t_all"
+			strings: "LSTM/cell_t_last"
+		}
+		arg {
+			name: "recompute_blobs_on_backward"
+		}
+		arg {
+			name: "timestep"
+			s: "timestep"
+		}
+		arg {
+			name: "backward_link_external"
+			strings: "LSTM/LSTM/hidden_t_prev_states_grad"
+			strings: "LSTM/LSTM/hidden_t_prev_states_grad"
+			strings: "LSTM/LSTM/cell_t_prev_states_grad"
+			strings: "LSTM/LSTM/cell_t_prev_states_grad"
+			strings: "LSTM/i2h_grad"
+		}
+		arg {
+			name: "link_external"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+			strings: "LSTM/i2h"
+		}
+		arg {
+			name: "link_offset"
+			ints: 0
+			ints: 1
+			ints: 0
+			ints: 1
+			ints: 0
+		}
+		arg {
+			name: "alias_offset"
+			ints: 1
+			ints: -1
+			ints: 1
+			ints: -1
+		}
+		arg {
+			name: "recurrent_states"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+		}
+		arg {
+			name: "backward_link_offset"
+			ints: 1
+			ints: 0
+			ints: 1
+			ints: 0
+			ints: 0
+		}
+		arg {
+			name: "param_grads"
+			strings: "LSTM/gates_t_w_grad"
+			strings: "LSTM/gates_t_b_grad"
+		}
+		arg {
+			name: "backward_link_internal"
+			strings: "LSTM/hidden_t_grad"
+			strings: "LSTM/hidden_t_prev_grad"
+			strings: "LSTM/cell_t_grad"
+			strings: "LSTM/cell_t_prev_grad"
+			strings: "LSTM/gates_t_grad"
+		}
+		arg {
+			name: "param"
+			ints: 3
+			ints: 4
+		}
+		arg {
+			name: "step_net"
+			s: "name: \"LSTM\"\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/gates_t_w\"\n  input: \"LSTM/gates_t_b\"\n  output: \"LSTM/gates_t\"\n  type: \"FC\"\n  arg {\n    name: \"axis\"\n    i: 2\n  }\n  device_option {\n    device_type: 1\n  }\n  engine: \"CUDNN\"\n}\nop {\n  input: \"LSTM/gates_t\"\n  input: \"input_t\"\n  output: \"LSTM/gates_t\"\n  type: \"Sum\"\n  device_option {\n    device_type: 1\n  }\n}\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/cell_t_prev\"\n  input: \"LSTM/gates_t\"\n  input: \"seq_lengths\"\n  input: \"timestep\"\n  output: \"LSTM/hidden_t\"\n  output: \"LSTM/cell_t\"\n  type: \"LSTMUnit\"\n  arg {\n    name: \"drop_states\"\n    i: 0\n  }\n  arg {\n    name: \"forget_bias\"\n    f: 0\n  }\n  device_option {\n    device_type: 1\n  }\n}\ntype: \"rnn\"\ndevice_option {\n  device_type: 1\n}\nexternal_input: \"input_t\"\nexternal_input: \"timestep\"\nexternal_input: \"LSTM/hidden_t_prev\"\nexternal_input: \"LSTM/cell_t_prev\"\nexternal_input: \"LSTM/gates_t_w\"\nexternal_input: \"LSTM/gates_t_b\"\nexternal_input: \"seq_lengths\"\nexternal_output: \"LSTM/hidden_t\"\nexternal_output: \"LSTM/cell_t\"\n"
+		}
+		arg {
+			name: "backward_step_net"
+			s: "name: \"RecurrentBackwardStep\"\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/cell_t_prev\"\n  input: \"LSTM/gates_t\"\n  input: \"seq_lengths\"\n  input: \"timestep\"\n  input: \"LSTM/hidden_t\"\n  input: \"LSTM/cell_t\"\n  input: \"LSTM/hidden_t_grad\"\n  input: \"LSTM/cell_t_grad\"\n  output: \"LSTM/hidden_t_prev_grad\"\n  output: \"LSTM/cell_t_prev_grad\"\n  output: \"LSTM/gates_t_grad\"\n  name: \"\"\n  type: \"LSTMUnitGradient\"\n  arg {\n    name: \"drop_states\"\n    i: 0\n  }\n  arg {\n    name: \"forget_bias\"\n    f: 0\n  }\n  device_option {\n    device_type: 1\n  }\n  is_gradient_op: true\n}\nop {\n  input: \"LSTM/hidden_t_prev\"\n  input: \"LSTM/gates_t_w\"\n  input: \"LSTM/gates_t_grad\"\n  output: \"LSTM/gates_t_w_grad\"\n  output: \"LSTM/gates_t_b_grad\"\n  output: \"LSTM/hidden_t_prev_grad_split\"\n  name: \"\"\n  type: \"FCGradient\"\n  arg {\n    name: \"axis\"\n    i: 2\n  }\n  device_option {\n    device_type: 1\n  }\n  engine: \"CUDNN\"\n  is_gradient_op: true\n}\nop {\n  input: \"LSTM/hidden_t_prev_grad\"\n  input: \"LSTM/hidden_t_prev_grad_split\"\n  output: \"LSTM/hidden_t_prev_grad\"\n  type: \"Sum\"\n}\ntype: \"simple\"\ndevice_option {\n  device_type: 1\n}\nexternal_input: \"LSTM/gates_t\"\nexternal_input: \"LSTM/hidden_t_grad\"\nexternal_input: \"LSTM/cell_t_grad\"\nexternal_input: \"input_t\"\nexternal_input: \"timestep\"\nexternal_input: \"LSTM/hidden_t_prev\"\nexternal_input: \"LSTM/cell_t_prev\"\nexternal_input: \"LSTM/gates_t_w\"\nexternal_input: \"LSTM/gates_t_b\"\nexternal_input: \"seq_lengths\"\nexternal_input: \"LSTM/hidden_t\"\nexternal_input: \"LSTM/cell_t\"\n"
+		}
+		arg {
+			name: "alias_src"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/hidden_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+			strings: "LSTM/LSTM/cell_t_prev_states"
+		}
+		arg {
+			name: "initial_recurrent_state_ids"
+			ints: 1
+			ints: 2
+		}
+		is_gradient_op: true
+	}
+	op {
+		input: "input_blob"
+		input: "LSTM/i2h_w"
+		input: "LSTM/i2h_grad"
+		output: "LSTM/i2h_w_grad"
+		output: "LSTM/i2h_b_grad"
+		output: "input_blob_grad"
+		name: ""
+		type: "FCGradient"
+		arg {
+			name: "axis"
+			i: 2
+		}
+		engine: "CUDNN"
+		is_gradient_op: true
+	}
+	op {
+		input: "iteration_mutex"
+		input: "optimizer_iteration"
+		output: "optimizer_iteration"
+		type: "AtomicIter"
+		device_option {
+			device_type: 0
+		}
+	}
+	op {
+		input: "optimizer_iteration"
+		output: "lr"
+		type: "LearningRate"
+		arg {
+			name: "policy"
+			s: "step"
+		}
+		arg {
+			name: "stepsize"
+			i: 1
+		}
+		arg {
+			name: "base_lr"
+			f: -2.5
+		}
+		arg {
+			name: "gamma"
+			f: 0.9999
+		}
+	}
+	op {
+		input: "LSTM/gates_t_w"
+		input: "ONE"
+		input: "LSTM/gates_t_w_grad"
+		input: "lr"
+		output: "LSTM/gates_t_w"
+		type: "WeightedSum"
+	}
+	op {
+		input: "LSTM/i2h_b"
+		input: "ONE"
+		input: "LSTM/i2h_b_grad"
+		input: "lr"
+		output: "LSTM/i2h_b"
+		type: "WeightedSum"
+	}
+	op {
+		input: "char_rnn_blob_0_w"
+		input: "ONE"
+		input: "char_rnn_blob_0_w_grad"
+		input: "lr"
+		output: "char_rnn_blob_0_w"
+		type: "WeightedSum"
+	}
+	op {
+		input: "char_rnn_blob_0_b"
+		input: "ONE"
+		input: "char_rnn_blob_0_b_grad"
+		input: "lr"
+		output: "char_rnn_blob_0_b"
+		type: "WeightedSum"
+	}
+	op {
+		input: "LSTM/gates_t_b"
+		input: "ONE"
+		input: "LSTM/gates_t_b_grad"
+		input: "lr"
+		output: "LSTM/gates_t_b"
+		type: "WeightedSum"
+	}
+	op {
+		input: "LSTM/i2h_w"
+		input: "ONE"
+		input: "LSTM/i2h_w_grad"
+		input: "lr"
+		output: "LSTM/i2h_w"
+		type: "WeightedSum"
+	}
+	device_option {
+		device_type: 1
+	}
+	external_input: "dbreader"
+	external_input: "seq_lengths"
+	external_input: "hidden_init"
+	external_input: "cell_init"
+	external_input: "LSTM/i2h_w"
+	external_input: "LSTM/i2h_b"
+	external_input: "LSTM/gates_t_w"
+	external_input: "LSTM/gates_t_b"
+	external_input: "char_rnn_blob_0_w"
+	external_input: "char_rnn_blob_0_b"
+	external_input: "iteration_mutex"
+	external_input: "optimizer_iteration"
+	external_input: "ONE"
+}
+network {
+	name: "char_rnn_save"
+	op {
+		type: "Save"
+		input: "LSTM/i2h_w"
+		input: "LSTM/i2h_b"
+		input: "LSTM/gates_t_w"
+		input: "LSTM/gates_t_b"
+		input: "char_rnn_blob_0_w"
+		input: "char_rnn_blob_0_b"
+		arg {
+			name: "db"
+			s: "LSTM_params"
+		}
+		arg {
+			name: "db_type"
+			s: "lmdb"
+		}
+	}
+	external_input: "LSTM/i2h_w"
+	external_input: "LSTM/i2h_b"
+	external_input: "LSTM/gates_t_w"
+	external_input: "LSTM/gates_t_b"
+	external_input: "char_rnn_blob_0_w"
+	external_input: "char_rnn_blob_0_b"	
+	device_option {
+		device_type: 1
+	}
+}
+execution_step {
+	#初始化参数
+	substep {
+		network: "char_rnn_init"
+		num_iter: 1
+	}
+	#训练
+	substep {
+		#LSTM的输出hidden_last和cell_last拷贝到输入
+		substep {
+			network: "char_rnn_loop"
+			num_iter: 1
+		}
+		#训练LSTM
+		substep {
+			network: "char_rnn"
+			num_iter: 1
+		}
+		#样本的个数是99990，batch_size=10
+		#所以为了让所有样本都被训练100次，需要99990/10×100
+		num_iter: 999900
+	}
+	#保存参数
+	substep {
+		network: "char_rnn_save"
+		num_iter: 1
+	}
+}

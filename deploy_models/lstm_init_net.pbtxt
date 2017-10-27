@@ -1,0 +1,113 @@
+name: "lstm_init_net"
+	#input_blob随机采样一个字符作为起始字符
+	op {
+		type: "UniformIntFill"
+		output: "indices_int32"
+		arg {
+			name: "min"
+			i: 0
+		}
+		arg {
+			name: "max"
+			i: 61
+		}
+		arg {
+			name: "shape"
+			ints: 1
+		}
+	}
+	op {
+		type: "Cast"
+		input: "indices_int32"
+		output: "indices"
+		arg {
+			name: "to"
+			i: 10
+		}
+	}
+	op {
+		type: "GivenTensorInt64Fill"
+		output: "index_size_tensor"
+		arg {
+			name: "shape"
+			ints: 1
+		}
+		arg {
+			name: "values"
+			ints: 62
+		}
+	}
+	op {
+		type: "CopyGPUToCPU"
+		input: "index_size_tensor"
+		output: "index_size_tensor_cpu"
+	}
+	op {
+		type: "OneHot"
+		input: "indices"
+		input: "index_size_tensor_cpu"
+		output: "oneHotVec"
+	}
+	op {
+		type: "Reshape"
+		input: "oneHotVec"
+		output: "input_blob"
+		output: "_"
+		arg {
+			name: "shape"
+			ints: 1
+			ints: 1
+			ints: 62
+		}
+	}
+	#每次输入1个字符
+	op {
+		type: "GivenTensorIntFill"
+		output: "seq_lengths"
+		arg {
+			name: "shape"
+			ints: 1
+		}
+		arg {
+			name: "values"
+			ints: 1
+		}
+	}
+	op {
+		type: "XavierFill"
+		output: "hidden_init"
+		arg {
+			name: "shape"
+			ints: 1
+			ints: 100
+		}
+	}
+	op {
+		type: "XavierFill"
+		output: "cell_init"
+		arg {
+			name: "shape"
+			ints: 1
+			ints: 100
+		}
+	}
+	op {
+		type: "Load"
+		output: "LSTM/i2h_w"
+		output: "LSTM/i2h_b"
+		output: "LSTM/gates_t_w"
+		output: "LSTM/gates_t_b"
+		output: "char_rnn_blob_0_w"
+		output: "char_rnn_blob_0_b"
+		arg {
+			name: "db"
+			s: "LSTM_params"
+		}
+		arg {
+			name: "db_type"
+			s: "lmdb"
+		}
+	}
+	device_option {
+		device_type: 1
+	}
